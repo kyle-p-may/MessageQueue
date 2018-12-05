@@ -5,21 +5,19 @@
 #include <iostream>
 
 #include "message-queue.hh"
+#include "mem_ref.h"
 
-struct Pkt
-{
-  char type;
-  uint64_t addr;
-};
 
 int
 main(int argc, char** argv)
 {
-  MessageQueue<Pkt> mq("/test_queue", 5, true, false);
+  MessageQueue<MemPkt> mq("/test_queue", 5, true, false);
 
-  Pkt dest;
+  MemPkt dest;
   while (mq.receive(&dest)) {
-    std::cout << dest.type << ": 0x" << std::hex << dest.addr << std::endl;
+    std::cout << "type: " << dest.type << " pc: " << dest.pc << " ea: ";
+    std::cout << std::hex << dest.addr << std::endl;
+    std::cout << std::dec;
   }
 
   return 0;

@@ -3,23 +3,19 @@
  */
 
 #include "message-queue.hh"
-
-struct Pkt
-{
-  char type;
-  uint64_t addr;
-};
+#include "mem_ref.h"
 
 int
 main(int argc, char** argv)
 {
-  MessageQueue<Pkt> mq("/test_queue", 5, false, true);
+  MessageQueue<MemPkt> mq("/test_queue", 5, false, true);
 
   for (int i = 0; i < 20; ++i) {
-    Pkt tmp;
-    if (i%2) { tmp.type = 'r'; }
-    else { tmp.type = 'w'; }
-    tmp.addr = 0x1000 + i*0x10;
+    MemPkt tmp;
+    tmp.type = 'r';
+    tmp.pc = i;
+    tmp.addr = i*0x100 + 0x2000;
+
     mq.send(&tmp, 0);
   }
 

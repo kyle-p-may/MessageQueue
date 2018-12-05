@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <iostream>
 #include <mqueue.h>
 #include <stdexcept>
 #include <string>
@@ -19,6 +20,36 @@
  * Currently, the implementation is limited to types that
  * do not contain any pointers to the actual data wanting to be transmitted
  */
+
+/**
+ * @brief on Pkt
+ * This type must overload three functions
+ * static unsigned sizeOfBuffer(void)
+ *  - this should return the size in bytes that the struct needs to send there information
+ * void unpack(char*)
+ *  - this should take in a buffer that was used for mqueue communication and move the data
+ *    into the struct's members
+ * void pack(char*)
+ *  - this will take the members of the class and place them into the provided buffer
+ *    for mqueue communication
+ *
+ * The use of the pack and unpack will allow for the mqueue code to stay relatively the same
+ * throughout
+ * An example for a simple type is provided
+ */
+class IntPkt
+{
+ public:
+  static unsigned sizeOfBuffer(void) { return 4; }
+  void unpack(char* in) { m = *((uint32_t*) in); }
+  void pack(char* out) const { *((uint32_t*) out) = m; }
+
+  uint32_t m;
+
+  IntPkt() = default;
+  ~IntPkt() = default;
+};
+
 template <typename T>
 class MessageQueue
 {
@@ -38,7 +69,8 @@ class MessageQueue
     bool active;
     const bool rd_enable;
     const bool wr_enable;
-    static const char endChar = '~';
+    static const char contChar = 1;
+    static const char endChar = 0;
 };
 
 /**
@@ -52,7 +84,7 @@ MessageQueue<T>::MessageQueue(std::string identifier, std::size_t maxQueueSize,
   queue_attributes.mq_flags = 0;
   queue_attributes.mq_curmsgs = 0;
   queue_attributes.mq_maxmsg = maxQueueSize;
-  queue_attributes.mq_msgsize = sizeof(T);
+  queue_attributes.mq_msgsize = T::sizeOfBuffer()+1;
   
   int flag = 0;
   if (read_enable && write_enable) {
@@ -92,19 +124,21 @@ MessageQueue<T>::receive(T* destination)
   }
 
   if(active) {
-    auto temporary_destination = new T();
-    ssize_t retval = mq_receive(descriptor, (char*) temporary_destination,
-                                sizeof(T), NULL);
+    char* tmp = new char[T::sizeOfBuffer()+1];
+    ssize_t retval = mq_receive(descriptor, tmp,
+                                T::sizeOfBuffer()+1, NULL);
     if (retval == -1) {
       throw std::runtime_error("Error while reading from message queue; ERRNO:" + 
                                 std::to_string(errno));
     }
 
-    if ( ((char*)temporary_destination)[0] == endChar ) {
+    if ( tmp[0] == endChar ) {
       active = false;
     } else {
-      *destination = *temporary_destination;
+      destination->unpack(tmp+1);
     }
+
+    delete[] tmp;
   }
 
   return active;
@@ -117,23 +151,27 @@ void MessageQueue<T>::send(const T* source, unsigned pri)
     throw std::runtime_error("Error: not initialized with permissions to write");
   }
 
-  if (int ret = mq_send(descriptor, (char*) source, sizeof(T), pri) == -1) {
+  /** Set up the message for the queue */
+  char* msg = new char[T::sizeOfBuffer()+1];
+  msg[0] = contChar;
+  source->pack(msg+1);
+  
+  if (int ret = mq_send(descriptor, msg, T::sizeOfBuffer()+1, pri) == -1) {
     throw std::runtime_error("Error while sending message; ERRNO:" +
                               std::to_string(errno));
   }
+  delete[] msg;
 }
 
 template <typename T>
 MessageQueue<T>::~MessageQueue()
 {
   if (wr_enable) {
-    char end[sizeof(T)];
-    end[0] = endChar;
+    char* end_msg = new char[T::sizeOfBuffer()+1];
 
-    if (int ret = mq_send(descriptor, end, sizeof(T), 0) == -1) {
-      throw std::runtime_error("Error while sending message; ERRNO:" +
-                                std::to_string(errno));
-    }
+    end_msg[0] = endChar;
+
+    mq_send(descriptor, end_msg, T::sizeOfBuffer()+1, 0);
   }
 
   mq_close(descriptor);
